@@ -26,6 +26,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   testDbConn:    (cfg)   => ipcRenderer.invoke('test-db-conn', cfg),
   loadDbSchema:  (cfg)   => ipcRenderer.invoke('load-db-schema', cfg),
   getLatestPosTxn: (cfg) => ipcRenderer.invoke('get-latest-pos-txn', cfg),
+  browseDirectory: ()    => ipcRenderer.invoke('browse-directory'),
+  scanPosDb:     (opts)  => ipcRenderer.invoke('scan-pos-db', opts),
 
   // Live push
   sendStats:        (s)  => ipcRenderer.send('stats-update', s),

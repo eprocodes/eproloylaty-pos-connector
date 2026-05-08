@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, screen, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, shell, dialog } = require('electron');
 const path = require('path');
 const fs   = require('fs');
 const Database = require('better-sqlite3');
@@ -1005,6 +1005,386 @@ ipcMain.handle('get-latest-pos-txn', async (event, cfg) => {
   }
 
   return { ok: false, message: `DB type "${merged.dbType}" is not supported yet. Supported: SQLite, Microsoft SQL Server.` };
+});
+
+// ── Auto-detect POS database helpers ─────────────────────────────────────────
+const { execFile } = require('child_process');
+
+const SCAN_SKIP_DIRS = new Set([
+  'windows', 'system32', 'syswow64', 'winsxs', 'node_modules', '.git',
+  'temp', 'tmp', '$recycle.bin', 'recovery', 'boot', 'bootmgr',
+]);
+
+function scanDirForSqliteFiles(dir, maxDepth, maxFiles, results) {
+  if (results.length >= maxFiles || maxDepth < 0) return;
+  let entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch(e) { return; }
+  for (const entry of entries) {
+    if (results.length >= maxFiles) break;
+    if (entry.name.startsWith('.')) continue;
+    if (SCAN_SKIP_DIRS.has(entry.name.toLowerCase())) continue;
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isFile() && /\.(db|sqlite|sqlite3)$/i.test(entry.name)) {
+      results.push(fullPath);
+    } else if (entry.isDirectory() && maxDepth > 0) {
+      scanDirForSqliteFiles(fullPath, maxDepth - 1, maxFiles, results);
+    }
+  }
+}
+
+// Scan for SQL Server .mdf database files
+function scanDirForMdfFiles(dir, maxDepth, maxFiles, results) {
+  if (results.length >= maxFiles || maxDepth < 0) return;
+  let entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch(e) { return; }
+  for (const entry of entries) {
+    if (results.length >= maxFiles) break;
+    if (entry.name.startsWith('.')) continue;
+    if (SCAN_SKIP_DIRS.has(entry.name.toLowerCase())) continue;
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isFile() && /\.mdf$/i.test(entry.name)) {
+      results.push(fullPath);
+    } else if (entry.isDirectory() && maxDepth > 0) {
+      scanDirForMdfFiles(fullPath, maxDepth - 1, maxFiles, results);
+    }
+  }
+}
+
+// Query Windows registry for installed SQL Server instances
+function detectSqlServerInstances() {
+  return new Promise((resolve) => {
+    const instances = [];
+
+    // Try 64-bit key first, then 32-bit WOW node
+    const regKeys = [
+      'HKLM\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\Instance Names\\SQL',
+      'HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\Microsoft SQL Server\\Instance Names\\SQL',
+    ];
+
+    let pending = regKeys.length;
+    const done = () => { if (--pending === 0) resolve(instances); };
+
+    for (const key of regKeys) {
+      execFile('reg', ['query', key], { timeout: 5000, windowsHide: true }, (err, stdout) => {
+        if (!err && stdout) {
+          // Each line like:  MSSQLSERVER   REG_SZ   MSSQL15.MSSQLSERVER
+          const lines = stdout.split(/\r?\n/);
+          for (const line of lines) {
+            const m = line.trim().match(/^(\S+)\s+REG_SZ\s+(\S+)/);
+            if (!m) continue;
+            const instanceName = m[1].trim();
+            if (!instanceName || instanceName.toLowerCase() === 'hklm\\software') continue;
+            // Named instance: localhost\INSTANCENAME, default: localhost
+            const host = instanceName.toUpperCase() === 'MSSQLSERVER'
+              ? 'localhost'
+              : `localhost\\${instanceName}`;
+            // Avoid duplicates
+            if (!instances.find(i => i.host.toLowerCase() === host.toLowerCase())) {
+              instances.push({ instanceName, host, source: 'registry' });
+            }
+          }
+        }
+        done();
+      });
+    }
+  });
+}
+
+// Derive candidate SQL Server instance info from an .mdf file path
+// e.g. C:\Program Files\Microsoft SQL Server\MSSQL15.SQLEXPRESS\MSSQL\DATA\POSDB.mdf
+function mdfToInstanceInfo(mdfPath) {
+  const name = path.basename(mdfPath, '.mdf'); // e.g. "POSDB"
+  // Try to extract instance from path segment like MSSQL15.INSTANCENAME
+  const m = mdfPath.match(/MSSQL\d+\.([^\\]+)[\\]/i);
+  const instanceName = m ? m[1].toUpperCase() : null;
+  const host = instanceName
+    ? (instanceName === 'MSSQLSERVER' ? 'localhost' : `localhost\\${instanceName}`)
+    : 'localhost\\SQLEXPRESS';
+  return { instanceName, host, dbName: name, mdfPath };
+}
+
+// Score a DB name as a likely POS database
+function scoreMssqlDbName(dbName) {
+  const n = (dbName || '').toLowerCase();
+  if (/pos|retail|cashier|restaurant|invoice|sale|shop|store|receipt/.test(n)) return 15;
+  if (/db$|data$/.test(n)) return 3;
+  return 0;
+}
+
+async function detectMssqlCandidates(mdfFiles, registryInstances) {
+  const candidates = [];
+
+  // Build from registry instances
+  for (const inst of registryInstances) {
+    // Try to list databases by connecting
+    try {
+      if (!mssql) mssql = require('mssql');
+      const tmpPool = await mssql.connect({
+        server: inst.host,
+        options: { encrypt: false, trustServerCertificate: true, instanceName: '' },
+        authentication: { type: 'default', options: { userName: 'sa', password: '' } },
+        pool: { max: 1, min: 0, idleTimeoutMillis: 3000 },
+        connectionTimeout: 4000,
+      }).catch(() => null);
+
+      if (tmpPool) {
+        try {
+          const dbRes = await tmpPool.request().query(
+            `SELECT name FROM sys.databases WHERE database_id > 4 ORDER BY name`
+          );
+          const dbs = (dbRes.recordset || []).map(r => r.name);
+          for (const dbName of dbs) {
+            const score = scoreMssqlDbName(dbName);
+            candidates.push({
+              type: 'mssql',
+              host: inst.host,
+              instanceName: inst.instanceName,
+              dbName,
+              port: '1433',
+              score: score + 20, // registry instance = higher base confidence
+              authNote: 'Windows Auth detected (sa login may need password)',
+              source: 'registry+connect',
+            });
+          }
+        } catch(e) {
+          // connected but can't list DBs — add instance entry anyway
+          candidates.push({
+            type: 'mssql',
+            host: inst.host,
+            instanceName: inst.instanceName,
+            dbName: 'POSDB',
+            port: '1433',
+            score: 12,
+            authNote: 'Enter sa password or use Windows Authentication',
+            source: 'registry',
+          });
+        } finally {
+          try { await tmpPool.close(); } catch(e) {}
+        }
+      } else {
+        // Instance found in registry but can't connect without password
+        candidates.push({
+          type: 'mssql',
+          host: inst.host,
+          instanceName: inst.instanceName,
+          dbName: 'POSDB',
+          port: '1433',
+          score: 10,
+          authNote: 'Enter sa password or use Windows Authentication',
+          source: 'registry',
+        });
+      }
+    } catch(e) {
+      candidates.push({
+        type: 'mssql',
+        host: inst.host,
+        instanceName: inst.instanceName,
+        dbName: 'POSDB',
+        port: '1433',
+        score: 8,
+        authNote: 'Enter sa password to connect',
+        source: 'registry',
+      });
+    }
+  }
+
+  // Add any .mdf-based entries not already covered by registry scan
+  for (const mdfPath of mdfFiles) {
+    const info = mdfToInstanceInfo(mdfPath);
+    const dbName = info.dbName;
+    const host   = info.host;
+    // Skip system DBs
+    if (/^(master|model|msdb|tempdb|ReportServer)$/i.test(dbName)) continue;
+    // Skip if already present from registry with same host+db
+    const alreadyFound = candidates.some(
+      c => c.host.toLowerCase() === host.toLowerCase()
+        && c.dbName.toLowerCase() === dbName.toLowerCase()
+    );
+    if (alreadyFound) continue;
+    candidates.push({
+      type: 'mssql',
+      host,
+      instanceName: info.instanceName || 'SQLEXPRESS',
+      dbName,
+      port: '1433',
+      mdfPath,
+      score: scoreMssqlDbName(dbName) + 5,
+      authNote: 'Enter sa password to connect',
+      source: 'mdf-file',
+    });
+  }
+
+  return candidates;
+}
+
+function scoreSqliteCandidate(filePath) {
+  let posDb;
+  try {
+    const stat = fs.statSync(filePath);
+    if (stat.size > 500 * 1024 * 1024) return null; // skip huge files
+    posDb = new Database(filePath, { readonly: true, fileMustExist: true });
+
+    const tables = posDb.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+    ).all().map(r => r.name);
+    if (!tables.length) return null;
+
+    const TXN_PATTERNS = [
+      /^transactions?$/i, /^invoices?$/i, /^sales?$/i, /^receipts?$/i,
+      /^orders?$/i, /^bills?$/i, /^payments?$/i, /^pos_?transactions?$/i,
+      /^t_invoices?$/i, /^tbl_?sale/i, /^sale_?master/i,
+    ];
+
+    let bestTable = null;
+    let tableScore = 0;
+    for (const t of tables) {
+      for (let i = 0; i < TXN_PATTERNS.length; i++) {
+        if (TXN_PATTERNS[i].test(t)) {
+          const s = TXN_PATTERNS.length - i;
+          if (s > tableScore) { tableScore = s; bestTable = t; }
+          break;
+        }
+      }
+    }
+    if (!bestTable) { bestTable = tables[0]; tableScore = 0; }
+
+    const qTable = `"${bestTable.replace(/"/g, '""')}"`;
+    const columns = posDb.prepare(`PRAGMA table_info(${qTable})`).all().map(r => r.name);
+    const lc = columns.map(c => c.toLowerCase());
+
+    let colScore = 0;
+    const COL_CHECKS = [
+      { words: ['invoicetotal','totalamount','amount','nettotal','grandtotal','total','price'], w: 3 },
+      { words: ['invoiceno','invoiceid','receiptno','ticketno','transid','trans_id','id'], w: 3 },
+      { words: ['transdate','transactiondate','createdat','date','datetime','timestamp'], w: 2 },
+      { words: ['status','txnstatus','state','paymentstatus'], w: 1 },
+    ];
+    for (const check of COL_CHECKS) {
+      if (check.words.some(w => lc.some(c => c.replace(/_/g,'') === w))) colScore += check.w;
+    }
+
+    let rowCount = null;
+    try { rowCount = posDb.prepare(`SELECT COUNT(*) AS c FROM ${qTable}`).get().c; } catch(e) {}
+
+    // Suggest column names by matching patterns
+    const pickCol = (candidates) => {
+      for (const cand of candidates) {
+        const found = columns.find(c => c.toLowerCase().replace(/_/g,'') === cand.toLowerCase());
+        if (found) return found;
+      }
+      return null;
+    };
+    const suggestedAmtCol    = pickCol(['invoicetotal','totalamount','amount','nettotal','grandtotal','total']) || 'InvoiceTotal';
+    const suggestedInvIdCol  = pickCol(['invoiceno','invoiceid','receiptno','ticketno','transid']) || 'InvoiceNo';
+    const suggestedDateCol   = pickCol(['transdate','transactiondate','createdat','date','datetime','timestamp']) || 'TransDate';
+    const suggestedStatusCol = pickCol(['status','txnstatus','state']) || 'Status';
+
+    return {
+      type: 'sqlite',
+      path: filePath,
+      dir: path.dirname(filePath),
+      dbName: path.basename(filePath),
+      txnTable: bestTable,
+      allTables: tables,
+      columns,
+      rowCount,
+      score: tableScore * 3 + colScore,
+      suggestedAmtCol,
+      suggestedInvIdCol,
+      suggestedDateCol,
+      suggestedStatusCol,
+    };
+  } catch(e) {
+    return null;
+  } finally {
+    if (posDb) try { posDb.close(); } catch(e) {}
+  }
+}
+
+// ── Open native folder picker ─────────────────────────────────────────────────
+ipcMain.handle('browse-directory', async () => {
+  const result = await dialog.showOpenDialog(settingsWin || BrowserWindow.getFocusedWindow(), {
+    properties: ['openDirectory'],
+    title: 'Select POS Installation Folder',
+  });
+  if (result.canceled || !result.filePaths.length) return { canceled: true };
+  return { canceled: false, path: result.filePaths[0] };
+});
+
+// ── Scan for POS databases (SQLite + SQL Server) ──────────────────────────────
+ipcMain.handle('scan-pos-db', async (event, opts) => {
+  const rootDir = opts && opts.rootDir ? opts.rootDir : null;
+
+  // ── SQLite scan ───────────────────────────────────────────────────────────
+  let sqliteDirsToScan = [];
+  if (rootDir) {
+    sqliteDirsToScan = [rootDir];
+  } else {
+    const candidates = [
+      'C:\\POS', 'C:\\POSData', 'C:\\POSDB', 'C:\\Restaurant',
+      'C:\\RetailPOS', 'C:\\Cashier', 'C:\\POSSystem', 'C:\\EasyPOS',
+      'C:\\POSSoftware', 'C:\\SaleSystem',
+    ];
+    for (const pf of ['C:\\Program Files', 'C:\\Program Files (x86)', 'C:\\ProgramData']) {
+      if (!fs.existsSync(pf)) continue;
+      let subs;
+      try { subs = fs.readdirSync(pf, { withFileTypes: true }); } catch(e) { continue; }
+      for (const sub of subs) {
+        if (sub.isDirectory() && /pos|restaurant|retail|cashier|sale|invoice|loyalty/i.test(sub.name)) {
+          candidates.push(path.join(pf, sub.name));
+        }
+      }
+    }
+    sqliteDirsToScan = candidates.filter(d => {
+      try { return fs.existsSync(d) && fs.statSync(d).isDirectory(); } catch(e) { return false; }
+    });
+  }
+
+  const sqliteFiles = [];
+  for (const dir of sqliteDirsToScan) {
+    scanDirForSqliteFiles(dir, 5, 60, sqliteFiles);
+    if (sqliteFiles.length >= 60) break;
+  }
+
+  const sqliteCandidates = [];
+  for (const f of sqliteFiles) {
+    const c = scoreSqliteCandidate(f);
+    if (c) sqliteCandidates.push(c);
+  }
+  sqliteCandidates.sort((a, b) => b.score - a.score);
+
+  // ── SQL Server scan (registry + .mdf files) ───────────────────────────────
+  let mssqlCandidates = [];
+  if (!rootDir) {
+    // Registry detection (works even when browsing a specific folder is not needed)
+    const [registryInstances] = await Promise.all([detectSqlServerInstances()]);
+
+    // .mdf file scan in default SQL Server data directories
+    const mdfSearchDirs = [];
+    for (const pf of ['C:\\Program Files', 'C:\\Program Files (x86)']) {
+      const sqlRoot = path.join(pf, 'Microsoft SQL Server');
+      if (fs.existsSync(sqlRoot)) mdfSearchDirs.push(sqlRoot);
+    }
+    const mdfFiles = [];
+    for (const dir of mdfSearchDirs) {
+      scanDirForMdfFiles(dir, 4, 40, mdfFiles);
+    }
+
+    mssqlCandidates = await detectMssqlCandidates(mdfFiles, registryInstances);
+    mssqlCandidates.sort((a, b) => b.score - a.score);
+  }
+
+  const allCandidates = [
+    ...mssqlCandidates.slice(0, 10),
+    ...sqliteCandidates.slice(0, 10),
+  ].sort((a, b) => b.score - a.score);
+
+  return {
+    ok: true,
+    candidates: allCandidates.slice(0, 15),
+    scannedDirs: sqliteDirsToScan,
+    totalFilesChecked: sqliteFiles.length,
+  };
 });
 
 // ── Feed log ──────────────────────────────────────────────────────────────────
