@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>eProLoyalty Agent</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --accent: #e92063; --accent2: #c41a54;
+  --green: #22c55e;  --amber: #f59e0b; --red: #ef4444;
+  --bg2: #181c27; --bg3: #1e2333; --bg4: #252b3d;
+  --border: rgba(255,255,255,0.08);
+  --border2: rgba(255,255,255,0.17);
+  --text: #e8eaf0; --text2: #8b90a4; --text3: #555c72;
+}
+html, body {
+  background: transparent !important;
+  overflow: hidden;
+  width: 252px;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  font-size: 13px;
+  color: var(--text);
+  user-select: none;
+  -webkit-app-region: no-drag;
+}
+
+/* Widget sits at bottom-right of the transparent window.
+   Menu grows above the icon. Window height is set by main.js. */
+.widget {
+  position: fixed;
+  bottom: 0; right: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 8px;
+  /* drop-shadow respects alpha — no bleed on transparent window */
+ /* filter: drop-shadow(0 8px 24px rgba(0,0,0,0.85));*/
+}
+
+/* ── MENU ── */
+.menu {
+  width: 236px;
+  background: #181c27;
+  border: 1px solid var(--border2);
+  border-radius: 16px;
+  padding: 14px;
+  /* no box-shadow — use drop-shadow filter on .widget instead */
+  display: none;
+  -webkit-app-region: drag;
+}
+.menu.open { display: block; animation: up .18s ease; }
+.menu * { -webkit-app-region: no-drag; }
+@keyframes up { from{opacity:0;transform:translateY(5px)} to{opacity:1;transform:none} }
+
+/* Header — draggable */
+.mhead {
+  display: flex; align-items: center; gap: 10px;
+  padding-bottom: 12px; border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+  cursor: move;
+  -webkit-app-region: drag;
+}
+.mhead * { -webkit-app-region: no-drag; }
+
+.logo-box {
+  width: 38px; height: 38px; background: var(--accent);
+  border-radius: 11px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.logo-name { font-size: 13px; font-weight: 700; color: var(--text); line-height: 1.2; }
+.logo-sub  { font-size: 10px; color: var(--text3); margin-top: 1px; }
+
+/* Status */
+.status-pill {
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--bg3); border-radius: 9px;
+  padding: 8px 11px; margin-bottom: 10px;
+}
+.live-badge { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; color: var(--green); }
+.live-badge .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); animation: blink 1.8s infinite; }
+.live-badge.paused { color: var(--amber); }
+.live-badge.paused .dot { background: var(--amber); animation: none; }
+.live-badge.stopped { color: var(--red); }
+.live-badge.stopped .dot { background: var(--red); animation: none; }
+@keyframes blink {
+  0%,100%{ box-shadow:0 0 0 0   rgba(34,197,94,.7); }
+  50%    { box-shadow:0 0 0 5px rgba(34,197,94,0);   }
+}
+
+/* Stats */
+.stats { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-bottom: 10px; }
+.stat { background: var(--bg3); border-radius: 9px; padding: 8px 11px; }
+.stat-l { font-size: 10px; color: var(--text3); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 3px; }
+.stat-v { font-size: 20px; font-weight: 700; color: var(--text); }
+.stat-v.g { color: var(--green); }
+
+.divider { height: 1px; background: var(--border); margin: 8px 0; }
+
+/* Toggle */
+.trow { display: flex; align-items: center; justify-content: space-between; padding: 5px 2px; margin-bottom: 2px; }
+.tlbl { font-size: 12px; color: var(--text2); }
+.sw {
+  width: 38px; height: 21px; background: var(--bg4);
+  border-radius: 11px; cursor: pointer; position: relative;
+  transition: background .2s; border: none; flex-shrink: 0;
+}
+.sw.on { background: var(--accent); }
+.sw::after { content:''; position:absolute; top:2.5px; left:2.5px; width:16px; height:16px; border-radius:50%; background:#fff; transition:transform .2s; }
+.sw.on::after { transform: translateX(17px); }
+
+/* Menu buttons */
+.mbtn {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  padding: 8px 9px; background: none; border: none; border-radius: 8px;
+  color: var(--text2); font-size: 12px; font-family: inherit;
+  cursor: pointer; text-align: left; transition: background .12s, color .12s;
+}
+.mbtn:hover { background: var(--bg3); color: var(--text); }
+.mbtn.danger:hover { background: rgba(239,68,68,.12); color: var(--red); }
+
+/* ── TRAY ICON ── */
+.icon {
+  width: 52px; height: 52px;
+  background: #181c27;
+  border: 1px solid var(--border2);
+  border-radius: 15px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; position: relative;
+  /* no box-shadow on icon — bleeds through transparent bg */
+  transition: transform .15s, background .15s;
+  flex-shrink: 0;
+}
+.icon:hover  { transform: scale(1.08); background: var(--bg3); }
+.icon:active { transform: scale(.95); }
+.gift { width: 32px; height: 32px; background: var(--accent); border-radius: 9px; display: flex; align-items: center; justify-content: center; }
+
+.ldot {
+  position: absolute; top: -4px; right: -4px;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--green); border: 3px solid #0a0d14;
+  animation: blink 1.8s infinite;
+}
+.ldot.off { background: var(--red); animation: none; }
+</style>
+</head>
+<body>
+<div class="widget">
+
+  <!-- MENU -->
+  <div class="menu" id="menu">
+
+    <div class="mhead">
+      <div class="logo-box">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+          <rect x="3" y="11" width="18" height="11" rx="2" fill="white" opacity=".95"/>
+          <rect x="2" y="8" width="20" height="4" rx="1.5" fill="white"/>
+          <path d="M12 8C12 8 8 3 5.5 5C3 7 8 8 12 8Z" fill="white" opacity=".8"/>
+          <path d="M12 8C12 8 16 3 18.5 5C21 7 16 8 12 8Z" fill="white" opacity=".8"/>
+          <rect x="10.5" y="8" width="3" height="11" rx=".5" fill="white" opacity=".65"/>
+        </svg>
+      </div>
+      <div>
+        <div class="logo-name">eProLoyalty</div>
+        <div class="logo-sub">by eProCodes · v1.4.2</div>
+      </div>
+    </div>
+
+    <div class="status-pill">
+      <span style="font-size:11px;color:var(--text2)">Agent Status</span>
+      <div class="live-badge" id="badge"><div class="dot"></div><span id="badgeTxt">LIVE</span></div>
+    </div>
+
+    <div class="stats">
+      <div class="stat"><div class="stat-l">Today</div><div class="stat-v" id="sToday">0</div></div>
+      <div class="stat"><div class="stat-l">Sent</div><div class="stat-v g" id="sSent">0</div></div>
+    </div>
+
+    <div class="trow">
+      <span class="tlbl">Monitoring</span>
+      <button class="sw on" id="monSw" onclick="toggleMon()"></button>
+    </div>
+
+    <div class="divider"></div>
+
+    <!-- Opens the POS Bridge settings window directly -->
+    <button class="mbtn" onclick="openSettings()">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+        <path d="M8 10a2 2 0 100-4 2 2 0 000 4z" stroke="currentColor" stroke-width="1.3"/>
+        <path d="M13.3 8c0-.3 0-.5-.1-.8l1.4-1-1.4-2.5-1.7.7c-.4-.3-.9-.5-1.4-.7L9.8 2H7l-.3 1.7c-.5.2-1 .4-1.4.7l-1.7-.7L2.2 6.2l1.4 1c-.1.3-.1.5-.1.8s0 .5.1.8l-1.4 1 1.4 2.5 1.7-.7c.4.3.9.5 1.4.7L6.9 14h2.8l.3-1.7c.5-.2 1-.4 1.4-.7l1.7.7 1.4-2.5-1.4-1c.1-.3.1-.5.1-.8z" stroke="currentColor" stroke-width="1.3"/>
+      </svg>
+      Settings
+    </button>
+
+    <!-- Triggers the floating popup window on the desktop -->
+    <button class="mbtn" onclick="simulate()">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+        <path d="M8 2v12M2 8h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+      </svg>
+      Simulate Transaction
+    </button>
+
+    <div class="divider"></div>
+
+    <button class="mbtn" id="agentToggleBtn" onclick="toggleAgentState()">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+        <rect x="3" y="3" width="10" height="10" rx="1.2" stroke="currentColor" stroke-width="1.5"/>
+      </svg>
+      <span id="agentToggleTxt">Stop Agent</span>
+    </button>
+
+    <button class="mbtn danger" onclick="quit()">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+        <path d="M10 2h4v12h-4M6 11l-4-3 4-3M2 8h8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      Quit Agent
+    </button>
+
+  </div><!-- /menu -->
+
+  <!-- TRAY ICON -->
+  <div class="icon" id="icon" onclick="toggleMenu()">
+    <div class="gift">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+        <rect x="3" y="11" width="18" height="11" rx="2" fill="white" opacity=".95"/>
+        <rect x="2" y="8" width="20" height="4" rx="1.5" fill="white"/>
+        <path d="M12 8C12 8 8 3 5.5 5C3 7 8 8 12 8Z" fill="white" opacity=".8"/>
+        <path d="M12 8C12 8 16 3 18.5 5C21 7 16 8 12 8Z" fill="white" opacity=".8"/>
+        <rect x="10.5" y="8" width="3" height="11" rx=".5" fill="white" opacity=".65"/>
+      </svg>
+    </div>
+    <div class="ldot" id="ldot"></div>
+  </div>
+
+</div><!-- /widget -->
+
+<script>
+let menuOpen  = false;
+let monitorOn = true;
+let agentOn   = true;
+let txnCount=0, sentCount=0, skipCount=0, totalAmt=0, invNo=10000001;
+const PTS_RATE = 10;
+
+/* ── Menu open/close — main.js resizes the window ── */
+function toggleMenu() {
+  menuOpen = !menuOpen;
+  document.getElementById('menu').classList.toggle('open', menuOpen);
+  if (window.electronAPI)
+    menuOpen ? window.electronAPI.expand() : window.electronAPI.collapse();
+}
+
+function closeMenu() {
+  menuOpen = false;
+  document.getElementById('menu').classList.remove('open');
+  if (window.electronAPI) window.electronAPI.collapse();
+}
+
+function updateAgentStatusUi() {
+  const badge = document.getElementById('badge');
+  const badgeTxt = document.getElementById('badgeTxt');
+  const ldot = document.getElementById('ldot');
+  const monSw = document.getElementById('monSw');
+  const agentToggleTxt = document.getElementById('agentToggleTxt');
+
+  badge.classList.remove('paused', 'stopped');
+
+  if (!agentOn) {
+    badge.classList.add('stopped');
+    badgeTxt.textContent = 'STOPPED';
+    ldot.classList.add('off');
+    monSw.disabled = true;
+    monSw.style.opacity = '0.5';
+    agentToggleTxt.textContent = 'Start Agent';
+    return;
+  }
+
+  monSw.disabled = false;
+  monSw.style.opacity = '';
+  agentToggleTxt.textContent = 'Stop Agent';
+
+  if (monitorOn) {
+    badgeTxt.textContent = 'LIVE';
+    ldot.classList.remove('off');
+  } else {
+    badge.classList.add('paused');
+    badgeTxt.textContent = 'PAUSED';
+    ldot.classList.add('off');
+  }
+}
+
+function toggleAgentState() {
+  agentOn = !agentOn;
+  updateAgentStatusUi();
+  if (window.electronAPI) window.electronAPI.sendAgentState(agentOn);
+}
+
+document.addEventListener('click', e => {
+  if (menuOpen && !e.target.closest('#menu') && !e.target.closest('#icon'))
+    closeMenu();
+});
+
+/* ── Settings — opens POS Bridge settings.html as a new window ── */
+function openSettings() {
+  closeMenu();
+  if (window.electronAPI) window.electronAPI.openSettings();
+}
+
+/* ── Simulate — tells main.js to open popup.html as floating window ── */
+function simulate() {
+  closeMenu();
+  if (!agentOn || !monitorOn) return;
+
+  const amt   = parseFloat((Math.random() * 280 + 5).toFixed(2));
+  const invId = 'INV-' + String(invNo++).padStart(8, '0');
+  const pts   = Math.floor(amt * PTS_RATE);
+
+  txnCount++; totalAmt += amt;
+  updateStats();
+
+  if (window.electronAPI) {
+    window.electronAPI.openPopup({ invId, amt, pts });
+    window.electronAPI.sendFeedLog({ msg: `New invoice: ${invId} — $${amt.toFixed(2)}`, type: 'ok' });
+    window.electronAPI.sendStats({ txnCount, sentCount, skipCount, totalAmt });
+  }
+}
+
+/* ── Restore persisted stats from DB on startup ── */
+if (window.electronAPI) {
+  window.electronAPI.onStatsLoaded(s => {
+    if (s.txnCount  !== undefined) txnCount  = s.txnCount;
+    if (s.sentCount !== undefined) sentCount = s.sentCount;
+    if (s.skipCount !== undefined) skipCount = s.skipCount;
+    if (s.totalAmt  !== undefined) totalAmt  = s.totalAmt;
+    updateStats();
+  });
+
+  window.electronAPI.onStatsUpdate(s => {
+    if (s.txnCount  !== undefined) txnCount  = s.txnCount;
+    if (s.sentCount !== undefined) sentCount = s.sentCount;
+    if (s.skipCount !== undefined) skipCount = s.skipCount;
+    if (s.totalAmt  !== undefined) totalAmt  = s.totalAmt;
+    updateStats();
+  });
+}
+
+/* ── Listen for popup results from main.js ── */
+if (window.electronAPI) {
+  window.electronAPI.onPointsSent(data => {
+    if (data.stats) {
+      txnCount  = data.stats.txnCount  ?? txnCount;
+      sentCount = data.stats.sentCount ?? sentCount;
+      skipCount = data.stats.skipCount ?? skipCount;
+      totalAmt  = data.stats.totalAmt  ?? totalAmt;
+    } else {
+      sentCount++;
+    }
+    updateStats();
+    window.electronAPI.sendStats({ txnCount, sentCount, skipCount, totalAmt });
+  });
+  window.electronAPI.onPointsSkipped(data => {
+    if (data.stats) {
+      txnCount  = data.stats.txnCount  ?? txnCount;
+      sentCount = data.stats.sentCount ?? sentCount;
+      skipCount = data.stats.skipCount ?? skipCount;
+      totalAmt  = data.stats.totalAmt  ?? totalAmt;
+    } else {
+      skipCount++;
+    }
+    updateStats();
+    window.electronAPI.sendStats({ txnCount, sentCount, skipCount, totalAmt });
+  });
+}
+
+function updateStats() {
+  document.getElementById('sToday').textContent = txnCount;
+  document.getElementById('sSent').textContent  = sentCount;
+}
+
+/* ── Monitor toggle ── */
+function toggleMon() {
+  if (!agentOn) return;
+  const sw = document.getElementById('monSw');
+  monitorOn = sw.classList.contains('on');
+  updateAgentStatusUi();
+  if (window.electronAPI) window.electronAPI.sendMonitorState(monitorOn);
+}
+
+if (window.electronAPI) {
+  window.electronAPI.onSettingsLoaded(s => {
+    if (s && s.agentEnabled !== undefined) agentOn = !!s.agentEnabled;
+    updateAgentStatusUi();
+  });
+
+  window.electronAPI.onMonitorState(isOn => {
+    monitorOn = isOn;
+    document.getElementById('monSw').classList.toggle('on', isOn);
+    updateAgentStatusUi();
+  });
+
+  window.electronAPI.onAgentState(isOn => {
+    agentOn = !!isOn;
+    updateAgentStatusUi();
+  });
+}
+
+updateAgentStatusUi();
+
+/* ── Quit ── */
+function quit() {
+  if (window.electronAPI) window.electronAPI.quitApp();
+}
+</script>
+</body>
+</html>

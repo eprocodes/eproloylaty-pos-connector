@@ -1,0 +1,741 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>eProLoyalty</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --accent: #e92063; --accent2: #c41a54;
+  --green: #22c55e;  --amber: #f59e0b; --red: #ef4444;
+  --bg2: #181c27; --bg3: #1e2333; --bg4: #252b3d;
+  --border: rgba(255,255,255,0.07);
+  --border2: rgba(255,255,255,0.14);
+  --text: #e8eaf0; --text2: #8b90a4; --text3: #555c72;
+}
+
+/*
+  TRUE TRANSPARENCY FIX:
+  - Window type:'toolbar' in main.js forces per-pixel alpha compositing on Windows
+  - html/body must have NO background whatsoever (not even transparent keyword)
+  - No drop-shadow, no box-shadow — they both create gray rectangles
+  - Card sits flush at 0,0 — window size = card size exactly
+*/
+html { background: none; }
+body {
+  background: none;
+  width: 390px;
+  height: 400px;
+  margin: 0; padding: 0;
+  overflow: hidden;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  font-size: 13px; color: var(--text);
+  user-select: none;
+  -webkit-app-region: no-drag;
+}
+
+/* Card fills window exactly — no wrapper, no padding, no shadow */
+.card {
+  background: #181c27;
+  border: 1px solid var(--border2);
+  border-radius: 16px;
+  padding: 20px 20px 16px;
+  width: 390px;
+  height: 400px;
+  position: relative;
+  overflow: hidden;
+  animation: popIn .2s cubic-bezier(.34,1.4,.64,1);
+  -webkit-app-region: drag;
+}
+.card * { -webkit-app-region: no-drag; }
+
+@keyframes popIn {
+  from { transform: scale(.93); opacity: 0; }
+  to   { transform: scale(1);   opacity: 1; }
+}
+
+/* Close X */
+.close-x {
+  position: absolute; top: 14px; right: 14px;
+  width: 26px; height: 26px;
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 7px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text3); font-size: 12px; transition: all .15s;
+}
+.close-x:hover { background: var(--bg4); color: var(--text); }
+
+/* Logo */
+.logo-row { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.logo-icon {
+  width: 40px; height: 40px; background: var(--accent);
+  border-radius: 11px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.logo-name { font-size: 17px; font-weight: 800; color: var(--text); line-height: 1.1; letter-spacing: -.02em; }
+.logo-by   { font-size: 10px; color: var(--text3); }
+
+/* Invoice */
+.inv-box {
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 10px; padding: 10px 13px; margin-bottom: 14px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.inv-lbl { font-size: 9px; color: var(--text3); text-transform: uppercase; letter-spacing: .07em; margin-bottom: 2px; }
+.inv-amt { font-size: 26px; font-weight: 800; color: var(--text); line-height: 1; }
+.inv-amt sup { font-size: 13px; font-weight: 500; color: var(--text2); vertical-align: super; }
+.inv-id  { font-size: 10px; color: var(--text3); font-family: monospace; margin-top: 2px; }
+.pts-val { font-size: 20px; font-weight: 800; color: var(--amber); text-align: right; line-height: 1; }
+.pts-lbl { font-size: 9px; color: var(--text3); text-align: right; margin-top: 2px; }
+
+/* Phone */
+.field-lbl { font-size: 10px; font-weight: 700; color: var(--text2); text-transform: uppercase; letter-spacing: .07em; margin-bottom: 6px; }
+.phone-row { display: flex; gap: 7px; margin-bottom: 4px; }
+.phone-prefix {
+  display: flex; align-items: center; gap: 5px;
+  background: var(--bg3); border: 1px solid var(--border2);
+  border-radius: 9px; padding: 0 11px;
+  font-size: 12px; color: var(--text2); font-weight: 600;
+  white-space: nowrap; flex-shrink: 0;
+}
+.phone-prefix span { font-size: 16px; }
+.phone-input {
+  flex: 1; background: var(--bg3);
+  border: 1px solid var(--border2); border-radius: 9px;
+  padding: 11px 12px; color: var(--text);
+  font-size: 18px; font-weight: 700; letter-spacing: .1em;
+  outline: none; font-family: 'Segoe UI', sans-serif;
+  transition: border-color .2s; width: 100%;
+}
+.phone-input:focus { border-color: var(--accent); }
+.phone-input::placeholder { color: var(--text3); font-weight: 400; letter-spacing: .03em; font-size: 14px; }
+.phone-err { font-size: 11px; color: var(--red); min-height: 15px; margin-bottom: 4px; }
+
+/* Countdown */
+.cbar-wrap { height: 3px; background: var(--bg4); border-radius: 2px; margin-bottom: 13px; overflow: hidden; }
+.cbar { height: 100%; background: var(--accent); border-radius: 2px; width: 100%; transition: width 1s linear; }
+
+/* Buttons */
+.actions { display: flex; gap: 8px; }
+.btn-send {
+  flex: 1; background: var(--accent); color: #fff;
+  border: none; border-radius: 9px; padding: 12px;
+  font-size: 13px; font-weight: 700;
+  cursor: pointer; font-family: inherit;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  transition: background .15s;
+}
+.btn-send:hover  { background: var(--accent2); }
+.btn-send:active { transform: scale(.97); }
+.btn-send:disabled { background: #3d0f22; color: #7a3050; cursor: not-allowed; transform: none; }
+.btn-skip {
+  background: var(--bg3); color: var(--text2);
+  border: 1px solid var(--border2); border-radius: 9px;
+  padding: 12px 16px; font-size: 13px; font-weight: 600;
+  cursor: pointer; font-family: inherit; transition: all .15s;
+}
+.btn-skip:hover    { background: var(--bg4); color: var(--text); }
+.btn-skip:disabled { opacity: .4; cursor: not-allowed; }
+
+.btn-cust {
+  background: var(--bg3); color: var(--text);
+  border: 1px solid var(--border2); border-radius: 9px;
+  padding: 12px 10px; font-size: 12px; font-weight: 700;
+  cursor: pointer; font-family: inherit; transition: all .15s;
+  white-space: nowrap;
+}
+.btn-cust:hover    { background: var(--bg4); }
+.btn-cust:disabled { opacity: .45; cursor: not-allowed; }
+
+.dismiss { text-align: center; font-size: 11px; color: var(--text3); margin-top: 8px; }
+
+/* Add customer modal popup */
+.cust-overlay {
+  position: absolute;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 13, 20, 0.72);
+  z-index: 8;
+}
+.cust-overlay.show { display: flex; }
+.cust-modal {
+  width: 330px;
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  border-radius: 12px;
+  padding: 12px;
+}
+.cust-modal .ttl { font-size: 14px; font-weight: 700; color: var(--text); margin-bottom: 3px; }
+.cust-modal .sub { font-size: 11px; color: var(--text2); margin-bottom: 9px; }
+.cust-modal .row { display: flex; gap: 7px; }
+.cust-prefix {
+  display: flex; align-items: center; gap: 5px;
+  background: var(--bg4); border: 1px solid var(--border2);
+  border-radius: 8px; padding: 0 11px;
+  font-size: 12px; color: var(--text2); font-weight: 700;
+  white-space: nowrap; flex-shrink: 0;
+}
+.cust-prefix span { font-size: 14px; }
+.cust-modal input {
+  flex: 1;
+  background: var(--bg4);
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+}
+.cust-modal input:focus { border-color: var(--accent); }
+.cust-modal .err { min-height: 14px; margin-top: 6px; font-size: 11px; color: var(--red); }
+.cust-modal .actions { margin-top: 8px; }
+
+/* Spinner */
+.spinner {
+  width: 14px; height: 14px;
+  border: 2px solid rgba(255,255,255,.25); border-top-color: #fff;
+  border-radius: 50%; animation: spin .7s linear infinite;
+  display: none; flex-shrink: 0;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Toast — inside card, absolutely positioned at bottom */
+.toast {
+  position: absolute;
+  bottom: 12px; left: 50%;
+  transform: translateX(-50%) translateY(10px);
+  background: var(--bg4);
+  border: 1px solid var(--border2);
+  border-radius: 9px;
+  padding: 9px 16px;
+  font-size: 12px; font-weight: 600; color: var(--text);
+  display: flex; align-items: center; gap: 8px;
+  opacity: 0;
+  transition: all .28s cubic-bezier(.34,1.2,.64,1);
+  pointer-events: none;
+  max-width: 350px;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.t-icon { font-size: 13px; flex-shrink: 0; }
+.t-copy { display: flex; flex-direction: column; min-width: 0; }
+.t-main { font-size: 12px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.t-sub { font-size: 11px; color: var(--text2); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.toast.ok   .t-icon { color: var(--green); }
+.toast.fail .t-icon { color: var(--red); }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="close-x" onclick="skip()">✕</div>
+
+  <div class="logo-row">
+    <div class="logo-icon">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+        <rect x="3" y="11" width="18" height="11" rx="2" fill="white" opacity=".95"/>
+        <rect x="2" y="8" width="20" height="4" rx="1.5" fill="white"/>
+        <path d="M12 8C12 8 8 3 5.5 5C3 7 8 8 12 8Z" fill="white" opacity=".8"/>
+        <path d="M12 8C12 8 16 3 18.5 5C21 7 16 8 12 8Z" fill="white" opacity=".8"/>
+        <rect x="10.5" y="8" width="3" height="11" rx=".5" fill="white" opacity=".65"/>
+      </svg>
+    </div>
+    <div>
+      <div class="logo-name">eProLoyalty</div>
+      <div class="logo-by">by eProCodes</div>
+    </div>
+  </div>
+
+  <div class="inv-box">
+    <div>
+      <div class="inv-lbl">Invoice Amount</div>
+      <div class="inv-amt"><sup>$</sup><span id="dispAmt">0.00</span></div>
+      <div class="inv-id" id="dispId">INV-00000</div>
+    </div>
+    <div>
+      <div class="pts-val" id="dispPts">0</div>
+      <div class="pts-lbl">points to earn</div>
+    </div>
+  </div>
+
+  <div class="field-lbl">Customer Mobile Number</div>
+  <div class="phone-row">
+    <div class="phone-prefix"><span>🇱🇧</span>&nbsp;<span id="prefixCode">+961</span></div>
+    <input type="tel" class="phone-input" id="phoneInput"
+      placeholder="00 000 000" maxlength="11"
+      oninput="fmt(this)" onkeydown="if(event.key==='Enter') send()">
+  </div>
+  <div class="phone-err" id="phoneErr"></div>
+
+  <div class="cbar-wrap"><div class="cbar" id="cbar"></div></div>
+
+  <div class="actions">
+    <button class="btn-skip" id="skipBtn" onclick="skip()">Skip</button>
+    <button class="btn-cust" id="addCustQuickBtn" onclick="openAddCustomerManual()">+ Add Customer</button>
+    <button class="btn-send" id="sendBtn" onclick="send()">
+      <div class="spinner" id="spinner"></div>
+      <svg id="sendIcon" width="14" height="14" viewBox="0 0 16 16" fill="none">
+        <path d="M2 8l4 4 8-8" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <span id="sendTxt">Send Points</span>
+    </button>
+  </div>
+
+  <div class="cust-overlay" id="addCustomerBox">
+    <div class="cust-modal">
+      <div class="ttl">Add Customer</div>
+      <div class="sub">Customer was not found for this transaction. Create customer, then points will be sent automatically.</div>
+      <div class="row" style="margin-bottom:7px">
+        <input id="custName" type="text" placeholder="Customer full name" maxlength="120">
+      </div>
+      <div class="row">
+        <div class="cust-prefix"><span>LB</span><span id="custPrefixCode">+961</span></div>
+        <input id="custPhone" type="tel" placeholder="70 123 456" maxlength="10" oninput="fmtCust(this)">
+      </div>
+      <div class="err" id="custErr"></div>
+      <div class="actions">
+        <button class="btn-skip" type="button" onclick="cancelAddCustomer()">Cancel</button>
+        <button class="btn-send" id="createCustBtn" type="button" onclick="createCustomerAndRetry()">Create Customer &amp; Send Points</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="dismiss" id="dismissTxt"></div>
+
+  <!-- Toast inside card -->
+  <div class="toast" id="toast">
+    <span class="t-icon" id="toastIcon">✓</span>
+    <span class="t-copy">
+      <span class="t-main" id="toastMsg"></span>
+      <span class="t-sub" id="toastSub"></span>
+    </span>
+  </div>
+</div>
+
+<script>
+// ── Invoice from URL ──────────────────────────────────────────────────────
+const params = new URLSearchParams(window.location.search);
+const invId  = params.get('invId') || 'INV-10000001';
+const amt    = parseFloat(params.get('amt') || '0');
+let   pts    = parseInt(params.get('pts')   || '0');
+
+document.getElementById('dispAmt').textContent = amt.toFixed(2);
+document.getElementById('dispId').textContent  = invId;
+document.getElementById('dispPts').textContent = pts.toLocaleString();
+
+// ── Config ────────────────────────────────────────────────────────────────
+let cfg = {
+  authUrl:     'https://jbchqgzsnbliekxonfmi.supabase.co/functions/v1/api-auth',
+  txnUrl:      'https://jbchqgzsnbliekxonfmi.supabase.co/functions/v1/api-record-transaction',
+  createCustomerUrl: 'https://jbchqgzsnbliekxonfmi.supabase.co/functions/v1/api-create-customer',
+  username:    'ghannam_loyalty@123',
+  password:    'epro_Monah@321',
+  merchantId:  'e206cd4a-16d0-4a42-8e77-36c4a25bc9eb',
+  processedBy: '6a1a2b39-bcb5-4d56-83a6-385d7db73e74',
+  countryCode: '+961', ptsRate: '10', autoDismiss: '30',
+  createCustomerEnabled: false,
+};
+if (window.electronAPI) {
+  window.electronAPI.onSettingsLoaded(s => {
+    cfg = { ...cfg, ...s };
+    document.getElementById('prefixCode').textContent = cfg.countryCode || '+961';
+    document.getElementById('custPrefixCode').textContent = cfg.countryCode || '+961';
+    pts = Math.floor(amt * parseInt(cfg.ptsRate || '10'));
+    document.getElementById('dispPts').textContent = pts.toLocaleString();
+    clearInterval(cdownInt);
+    startCountdown(parseInt(cfg.autoDismiss || '30'));
+  });
+}
+
+// ── Lebanese mobile validation ──────────────────────────────────────────
+// All Lebanese mobile numbers are 8 local digits (e.g. 03 123 456 / 70 123 456).
+// 03-series: drop leading 0 for international → +961 3 XXXXXX
+// 7x/8x/9x-series: keep all 8 digits        → +961 7X XXXXXX
+const LB_MOBILE_PREFIXES = [
+  '03',                          // Alfa
+  '70', '71', '76', '78', '79', // Touch / Alfa
+  '80', '81', '82', '83', '85', // Alfa / Touch broadband-mobile
+  '86', '87', '88',             // Touch
+  '90', '91', '96',             // Alfa / Touch
+];
+
+function validateLebaneseMobile(raw) {
+  if (!raw) {
+    return { valid: false, message: 'Enter Lebanese mobile number' };
+  }
+  // Accept 7 digits if starts with 3
+  if (raw.startsWith('3')) {
+    if (raw.length !== 7) {
+      return { valid: false, message: 'If starting with 3, enter 7 digits (e.g. 3123456)' };
+    }
+    return { valid: true, message: '' };
+  }
+  // Accept 8 digits for other valid prefixes
+  if (raw.length !== 8) {
+    return { valid: false, message: 'Enter 8-digit Lebanese mobile number (e.g. 03 123 456 or 70 123 456)' };
+  }
+  if (!LB_MOBILE_PREFIXES.includes(raw.slice(0, 2))) {
+    return { valid: false, message: 'Invalid Lebanese mobile prefix. Valid: 03, 70, 71, 76, 78, 79, 8x, 90, 91, 96' };
+  }
+  return { valid: true, message: '' };
+}
+
+function buildLebanesePhone(raw, countryCode) {
+  const cc = String(countryCode || '+961').replace(/\s+/g, '');
+  // 03-series drops the leading 0 for international format
+  const local = raw.startsWith('0') ? raw.slice(1) : raw;
+  return `${cc}${local}`;
+}
+
+// ── Format phone ──────────────────────────────────────────────────────────
+function fmt(input) {
+  let v = input.value.replace(/\D/g, '');
+  if (v.length > 8) v = v.slice(0, 8);
+  if (v.length > 2) v = v.slice(0, 2) + ' ' + v.slice(2);
+  if (v.length > 6) v = v.slice(0, 6) + ' ' + v.slice(6);
+  input.value = v;
+  document.getElementById('phoneErr').textContent = '';
+}
+
+function fmtCust(input) {
+  let v = input.value.replace(/\D/g, '');
+  if (v.length > 8) v = v.slice(0, 8);
+  if (v.length > 2) v = v.slice(0, 2) + ' ' + v.slice(2);
+  if (v.length > 6) v = v.slice(0, 6) + ' ' + v.slice(6);
+  input.value = v;
+  document.getElementById('custErr').textContent = '';
+}
+
+// ── Countdown ─────────────────────────────────────────────────────────────
+let cdownInt;
+function startCountdown(total) {
+  clearInterval(cdownInt);
+  let t = total;
+  const bar  = document.getElementById('cbar');
+  const hint = document.getElementById('dismissTxt');
+  bar.style.transition = 'none'; bar.style.width = '100%';
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    bar.style.transition = `width ${total}s linear`; bar.style.width = '0%';
+  }));
+  hint.textContent = `Auto-dismissing in ${t}s`;
+  cdownInt = setInterval(() => {
+    t--;
+    hint.textContent = t > 0 ? `Auto-dismissing in ${t}s` : '';
+    if (t <= 0) { clearInterval(cdownInt); skip(); }
+  }, 1000);
+}
+startCountdown(30);
+window.addEventListener('load', () => document.getElementById('phoneInput').focus());
+
+// ── Toast ─────────────────────────────────────────────────────────────────
+let toastTimer;
+function showToast(msg, type = 'ok', subMsg = '') {
+  const el = document.getElementById('toast');
+  document.getElementById('toastIcon').textContent = type === 'ok' ? '✓' : '✕';
+  document.getElementById('toastMsg').textContent  = msg;
+  document.getElementById('toastSub').textContent  = subMsg;
+  el.className = `toast ${type} show`;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 3500);
+}
+
+// ── Skip ──────────────────────────────────────────────────────────────────
+let skipping = false;
+let pendingCreateCtx = null;
+function skip() {
+  if (skipping) return;
+  skipping = true;
+  clearInterval(cdownInt);
+  if (window.electronAPI) {
+    window.electronAPI.pointsSkipped({ invId, amt });
+    setTimeout(() => window.electronAPI.closePopup(), 80);
+  } else { window.close(); }
+}
+
+function setSendBusy(isBusy, sendText = 'Sending...') {
+  const sendBtn = document.getElementById('sendBtn');
+  sendBtn.disabled = !!isBusy;
+  document.getElementById('skipBtn').disabled = !!isBusy;
+  document.getElementById('spinner').style.display  = isBusy ? 'block' : 'none';
+  document.getElementById('sendIcon').style.display = isBusy ? 'none' : '';
+  document.getElementById('sendTxt').textContent    = isBusy ? sendText : 'Send Points';
+}
+
+function normalizePhoneForApi(v) {
+  const raw = String(v || '').replace(/\s+/g, '');
+  if (!raw) return '';
+  return raw.startsWith('+') ? raw : `+${raw.replace(/^\+/, '')}`;
+}
+
+function splitPhoneByCountryCode(fullPhone, countryCode) {
+  const full = String(fullPhone || '').replace(/\s+/g, '');
+  const cc = String(countryCode || '+961').replace(/\s+/g, '');
+  if (!full) return '';
+  if (full.startsWith(cc)) return full.slice(cc.length);
+  return full.replace(/^\+/, '');
+}
+
+function showAddCustomerForm(mobile, token, earned) {
+  pendingCreateCtx = { mobile, token, earned };
+  const box = document.getElementById('addCustomerBox');
+  const phoneEl = document.getElementById('custPhone');
+  const nameEl = document.getElementById('custName');
+  const errEl = document.getElementById('custErr');
+  const cc = cfg.countryCode || '+961';
+  const ccEl = document.getElementById('custPrefixCode');
+
+  if (ccEl) ccEl.textContent = cc;
+  phoneEl.value = splitPhoneByCountryCode(mobile || '', cc);
+  nameEl.value = '';
+  errEl.textContent = '';
+  box.classList.add('show');
+  setSendBusy(false);
+  document.getElementById('skipBtn').disabled = true;
+  document.getElementById('sendBtn').disabled = true;
+  sending = false;
+  clearInterval(cdownInt);
+  document.getElementById('dismissTxt').textContent = 'Add customer to continue';
+  setTimeout(() => nameEl.focus(), 20);
+}
+
+function cancelAddCustomer() {
+  pendingCreateCtx = null;
+  document.getElementById('addCustomerBox').classList.remove('show');
+  document.getElementById('custErr').textContent = '';
+  document.getElementById('skipBtn').disabled = false;
+  document.getElementById('sendBtn').disabled = false;
+  startCountdown(20);
+}
+
+async function postTransactionWithToken(token, mobile, earned) {
+  const txnRes = await fetch(cfg.txnUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+    body: JSON.stringify({
+      merchant_id:      cfg.merchantId,
+      invoice_number:   invId ? String(invId) : undefined,
+      customer_phone:   mobile,
+      transaction_type: 'earned',
+      points:           earned,
+      processed_by:     cfg.processedBy,
+      purchase_amount:  amt,
+    }),
+  });
+  if (!txnRes.ok) {
+    const errText = await txnRes.text().catch(() => '');
+    const errMsg  = parseApiErrorText(errText, `Transaction failed (${txnRes.status})`);
+    throw new Error(errMsg);
+  }
+  const txn = await txnRes.json();
+  if (!txn.success) throw new Error(txn.message || 'Server rejected transaction');
+  return txn;
+}
+
+function parseApiErrorText(rawText, fallbackMsg) {
+  const text = String(rawText || '').trim();
+  if (!text) return fallbackMsg;
+
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed === 'object') {
+      if (parsed.error && typeof parsed.error === 'string') return parsed.error;
+      if (parsed.message && typeof parsed.message === 'string') return parsed.message;
+    }
+  } catch (_) {
+    // Not JSON, return as-is.
+  }
+
+  return text;
+}
+
+function toUserFriendlyCustomerError(rawMsg) {
+  const msg = String(rawMsg || '').trim();
+  if (!msg) return 'Failed to create customer';
+
+  if (/customer\s+limit\s+exceeded|reached\s+your\s+customer\s+limit/i.test(msg)) {
+    return 'You have exceeded customer limit, please buy new customers package from the admin pannel, refresh it, or contact eProCodes Support on 96178707169';
+  }
+
+  if (/already\s+exist|already\s+registered|duplicate/i.test(msg)) {
+    return 'This customer is already registered. Please click "Send Points".';
+  }
+
+  return msg;
+}
+
+function finalizeSuccess(txn, earned, mobile) {
+  const namePart = txn.customer_name ? `, ${txn.customer_name}` : '';
+  const totalPoints = txn.new_balance != null ? Number(txn.new_balance).toLocaleString() : null;
+  const subLine = totalPoints ? `Total points: ${totalPoints} pts` : `Points sent: ${earned.toLocaleString()} pts`;
+  showToast(`Thank you${namePart}!`, 'ok', subLine);
+
+  if (window.electronAPI) {
+    window.electronAPI.pointsSent({
+      invId, amt, pts: earned, mobile,
+      customerName: txn.customer_name || null,
+      newBalance:   txn.new_balance   ?? null,
+    });
+  }
+
+  setTimeout(() => {
+    if (window.electronAPI) window.electronAPI.closePopup();
+    else window.close();
+  }, 2200);
+}
+
+async function createCustomerAndRetry() {
+  if (!pendingCreateCtx) return;
+
+  const name = String(document.getElementById('custName').value || '').trim();
+  const localPhone = String(document.getElementById('custPhone').value || '').replace(/\D/g, '');
+  const cc = String(cfg.countryCode || '+961').replace(/\s+/g, '');
+  const errEl = document.getElementById('custErr');
+
+  if (!name) {
+    errEl.textContent = 'Please enter customer name';
+    return;
+  }
+  const phoneValidation = validateLebaneseMobile(localPhone);
+  if (!phoneValidation.valid) {
+    errEl.textContent = phoneValidation.message;
+    return;
+  }
+  const phone = buildLebanesePhone(localPhone, cc);
+
+  const btn = document.getElementById('createCustBtn');
+  btn.disabled = true;
+  errEl.textContent = '';
+
+  let { token, earned } = pendingCreateCtx;
+
+  try {
+    if (!token) {
+      const authRes = await fetch(cfg.authUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: cfg.username, password: cfg.password }),
+      });
+      if (!authRes.ok) throw new Error(`Auth failed (${authRes.status})`);
+      ({ token } = await authRes.json());
+      if (!token) throw new Error('No token received');
+    }
+
+    const createRes = await fetch(cfg.createCustomerUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        merchant_id: cfg.merchantId,
+        full_name: name,
+        phone,
+        total_points: 0,
+      }),
+    });
+
+    if (!createRes.ok) {
+      const txt = await createRes.text();
+      const parsedMsg = parseApiErrorText(txt, `Create customer failed (${createRes.status})`);
+      throw new Error(toUserFriendlyCustomerError(parsedMsg));
+    }
+
+    const txn = await postTransactionWithToken(token, phone, earned);
+    document.getElementById('addCustomerBox').classList.remove('show');
+    document.getElementById('skipBtn').disabled = false;
+    document.getElementById('sendBtn').disabled = false;
+    pendingCreateCtx = null;
+    finalizeSuccess(txn, earned, phone);
+  } catch (err) {
+    if (window.electronAPI) {
+      window.electronAPI.pointsFailed({
+        invId,
+        amt,
+        pts: earned,
+        mobile: phone,
+      });
+    }
+    errEl.textContent = err.message || 'Failed to create customer';
+    btn.disabled = false;
+  }
+}
+
+function openAddCustomerManual() {
+  if (sending) return;
+  const raw = document.getElementById('phoneInput').value.replace(/\D/g, '');
+  const mobile = raw ? buildLebanesePhone(raw, cfg.countryCode || '+961') : '';
+  const earned = Math.floor(amt * parseInt(cfg.ptsRate || '10'));
+  showAddCustomerForm(mobile, null, earned);
+}
+
+// ── Send ──────────────────────────────────────────────────────────────────
+let sending = false;
+async function send() {
+  if (sending) return;
+  const raw = document.getElementById('phoneInput').value.replace(/\D/g, '');
+  const validation = validateLebaneseMobile(raw);
+  if (!validation.valid) {
+    document.getElementById('phoneErr').textContent = validation.message;
+    return;
+  }
+  sending = true;
+  clearInterval(cdownInt);
+
+  setSendBusy(true, 'Sending...');
+  document.getElementById('dismissTxt').textContent = '';
+
+  const mobile = buildLebanesePhone(raw, cfg.countryCode || '+961');
+  const earned = Math.floor(amt * parseInt(cfg.ptsRate || '10'));
+  let token = null;
+
+  try {
+    // Step 1 — Auth
+    const authRes = await fetch(cfg.authUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: cfg.username, password: cfg.password }),
+    });
+    if (!authRes.ok) throw new Error(`Auth failed (${authRes.status})`);
+    ({ token } = await authRes.json());
+    if (!token) throw new Error('No token received');
+
+    // Step 2 — Record transaction
+    const txn = await postTransactionWithToken(token, mobile, earned);
+    finalizeSuccess(txn, earned, mobile);
+
+  } catch (err) {
+    const msg = err.message || 'Failed to send points';
+    const customerMissing = /customer.*not.*found|not.*exist|no.*customer|unknown.*customer|customer.*not.*registered|not.*a.*customer/i.test(msg);
+
+    if (customerMissing) {
+      if (cfg.createCustomerEnabled) {
+        showToast('Customer not found. Fill in the form to add them.', 'fail');
+        showAddCustomerForm(mobile, token, earned);
+        return;
+      }
+      // createCustomer disabled — show a clear inline message and toast
+      document.getElementById('phoneErr').textContent = 'Customer not found. Please register them first or enable "Add Customer" in settings.';
+      showToast('Customer not found', 'fail', 'This number is not registered');
+      sending = false;
+      setSendBusy(false);
+      startCountdown(20);
+      return;
+    }
+
+    if (window.electronAPI) {
+      window.electronAPI.pointsFailed({
+        invId,
+        amt,
+        pts: earned,
+        mobile,
+      });
+    }
+
+    showToast(msg, 'fail');
+    sending = false;
+    setSendBusy(false);
+    startCountdown(20);
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,48 @@
+{
+  "name": "eproloyalty-pos-bridge",
+  "version": "1.4.2",
+  "description": "eProLoyalty POS Bridge Desktop Agent",
+  "main": "main.js",
+  "scripts": {
+    "start":     "electron .",
+    "build:win": "electron-builder --win --x64",
+    "build:mac": "electron-builder --mac"
+  },
+  "build": {
+    "appId": "com.eprocodes.eproloyalty",
+    "productName": "eProLoyalty POS Bridge",
+    "copyright": "Copyright © 2025 eProCodes",
+    "directories": { "output": "dist" },
+    "files": ["main.js", "preload.js", "renderer/**/*", "assets/**/*"],
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "icon": "assets/icon.ico",
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "runAfterFinish": true
+    },
+    "extraResources": [],
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/better-sqlite3/**/*"
+    ]
+  },
+  "devDependencies": {
+    "electron": "^29.1.0",
+    "electron-builder": "^24.13.0"
+  },
+  "dependencies": {
+    "mssql":         "^10.0.4",
+    "mysql2":        "^3.9.0",
+    "pg":            "^8.11.0",
+    "better-sqlite3":"^9.4.0",
+    "axios":         "^1.6.0"
+  }
+}
