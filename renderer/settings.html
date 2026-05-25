@@ -361,6 +361,17 @@ tr:hover td { background: var(--bg3); }
 /* ══ TOAST ══ */
 #toast { position:fixed; bottom:80px; right:16px; background:var(--bg2); border:1px solid var(--border2); border-radius:10px; padding:10px 16px; font-size:12px; font-weight:500; color:var(--text); z-index:999; transform:translateY(20px); opacity:0; transition:all .25s cubic-bezier(.34,1.3,.64,1); pointer-events:none; display:flex; align-items:center; gap:8px; box-shadow:0 4px 20px rgba(0,0,0,.5); max-width:240px; }
 #toast.show { transform:translateY(0); opacity:1; }
+
+/* ══ MULTI-CURRENCY MAPPING TABLE ══ */
+.mc-map-hdr { display:grid; grid-template-columns:160px 1fr 1fr; gap:8px; padding-bottom:8px; border-bottom:1px solid var(--border); margin-bottom:4px; }
+.mc-map-row { display:grid; grid-template-columns:160px 1fr 1fr; gap:8px; align-items:start; padding:10px 0; border-bottom:1px solid rgba(255,255,255,0.04); }
+.mc-map-row:last-child { border-bottom:none; }
+.mc-field-lbl { font-size:12px; font-weight:600; color:var(--text); padding-top:8px; line-height:1.4; }
+.mc-field-sub { font-size:10px; color:var(--text3); margin-top:2px; }
+.mc-col-hdr { font-size:10px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:var(--text3); }
+.mc-inp { width:100%; background:var(--bg3); border:1px solid var(--border2); border-radius:7px; padding:6px 10px; color:var(--text); font-size:12px; font-family:monospace; outline:none; transition:border-color .2s; }
+.mc-inp:focus { border-color:var(--accent); }
+.mc-inp-hint { font-size:10px; color:var(--text3); margin-top:3px; }
 </style>
 </head>
 <body>
@@ -554,6 +565,90 @@ tr:hover td { background: var(--bg3); }
           <div class="card-title">Filter Query</div>
           <div class="field"><label>WHERE Clause (optional)</label><textarea id="cfg-dbWhere" style="background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:10px 12px;color:var(--text);font-family:monospace;font-size:12px;width:100%;resize:vertical;outline:none;min-height:70px">Status = 'PAID' AND TransactionType = 'SALE'</textarea></div>
           <div class="field" style="margin-top:12px"><label>Min Invoice Amount ($)</label><input type="number" id="cfg-dbMinAmount" value="1.00" style="max-width:140px"></div>
+        </div>
+
+        <!-- MULTI-CURRENCY CARD -->
+        <div class="card">
+          <div class="card-title">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+              <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.4"/>
+              <path d="M8 4v1.5M8 10.5V12M6 6.5C6 5.67 6.9 5 8 5s2 .67 2 1.5-1 1.5-2 1.5-2 .67-2 1.5S6.9 11 8 11s2-.67 2-1.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+            </svg>
+            Multi-Currency Amount Handling
+          </div>
+
+          <div class="toggle-row" style="padding-bottom:0;border-bottom:none">
+            <div>
+              <div class="t-label">Save Different Currency Amounts in the Same Field</div>
+              <div class="t-desc">When enabled, configure how currency code and exchange rate are mapped using database table and column names. If currency matches Dollar Flag Value, original amount is sent; otherwise amount is converted by dividing by Exchange Rate. Works generically with any POS system — no hardcoded logic.</div>
+            </div>
+            <button class="toggle-sw" id="cfg-multiCurrencyEnabled" onclick="toggleMultiCurrency(this)"></button>
+          </div>
+
+          <!-- conditional mapping section — hidden by default -->
+          <div id="multiCurrencyFields" style="display:none;margin-top:20px">
+            <div class="divider" style="margin-top:0;margin-bottom:16px"></div>
+
+            <!-- column headers -->
+            <div class="mc-map-hdr">
+              <span class="mc-col-hdr">Field</span>
+              <span class="mc-col-hdr">DB Table</span>
+              <span class="mc-col-hdr">DB Column</span>
+            </div>
+
+            <!-- Currency Field row -->
+            <div class="mc-map-row">
+              <div>
+                <div class="mc-field-lbl">Currency Field</div>
+                <div class="mc-field-sub">Currency code / value from POS</div>
+              </div>
+              <div>
+                <input type="text" class="mc-inp" id="cfg-mc-currency-table" placeholder="e.g. Transactions" value="Transactions">
+                <div class="mc-inp-hint">Table name in the POS database</div>
+              </div>
+              <div>
+                <input type="text" class="mc-inp" id="cfg-mc-currency-col" placeholder="e.g. CurrencyCode">
+                <div class="mc-inp-hint">Column name in the POS table</div>
+              </div>
+            </div>
+
+            <!-- Exchange Rate Field row -->
+            <div class="mc-map-row">
+              <div>
+                <div class="mc-field-lbl">Exchange Rate Field</div>
+                <div class="mc-field-sub">Conversion rate from POS</div>
+              </div>
+              <div>
+                <input type="text" class="mc-inp" id="cfg-mc-rate-table" placeholder="e.g. Transactions" value="Transactions">
+                <div class="mc-inp-hint">Table name in the POS database</div>
+              </div>
+              <div>
+                <input type="text" class="mc-inp" id="cfg-mc-rate-col" placeholder="e.g. ExchangeRate">
+                <div class="mc-inp-hint">Column name in the POS table</div>
+              </div>
+            </div>
+
+            <!-- Dollar flag value config -->
+            <div style="margin-top:14px;padding:12px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--r)">
+              <div style="font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px">Dollar Flag Value</div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                <div class="field">
+                  <label>Dollar Flag Value</label>
+                  <input type="text" class="mc-inp" id="cfg-mc-flag-value" placeholder="e.g. 1, true, USD" value="1" style="border-radius:8px;padding:8px 12px;font-family:inherit">
+                  <div class="hint">The value your POS writes when the transaction is in USD. Can be any string — <span class="icode">1</span>, <span class="icode">0</span>, <span class="icode">true</span>, <span class="icode">false</span>, or any POS-defined string.</div>
+                </div>
+                <div style="padding-top:22px">
+                  <div style="font-size:11px;color:var(--text3);line-height:1.6">
+                    When the POS field value matches the Dollar Flag Value, the transaction is treated as a <strong style="color:var(--amber)">USD transaction</strong> and the exchange rate mapping is applied before points calculation.
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="btn-row" style="margin-top:14px">
+              <button class="btn btn-primary" onclick="saveConfig()">Save Currency Mapping</button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -915,6 +1010,13 @@ function syncMonitor(ssw) {
 
 // ── TOGGLES ──────────────────────────────────────────────────────────────────
 function tsw(btn) { btn.classList.toggle('on'); }
+
+// ── MULTI-CURRENCY TOGGLE ─────────────────────────────────────────────────────
+function toggleMultiCurrency(btn) {
+  btn.classList.toggle('on');
+  document.getElementById('multiCurrencyFields').style.display =
+    btn.classList.contains('on') ? 'block' : 'none';
+}
 
 // ── FEED ─────────────────────────────────────────────────────────────────────
 function feedLog(msg, type='ok') {
@@ -1346,6 +1448,21 @@ function gatherSettings() {
     dbColDate:   dateMap.col      || 'TransDate',
     dbColStatus: statusMap.col    || 'Status',
     dbFieldMappings: mappings.map(({ key, ...m }) => ({ ...m })),
+    // Multi-currency settings
+    multiCurrencyEnabled: document.getElementById('cfg-multiCurrencyEnabled')?.classList.contains('on') || false,
+    multiCurrency: {
+      currencyField: {
+        dbTable:  document.getElementById('cfg-mc-currency-table')?.value || 'Transactions',
+        dbColumn: document.getElementById('cfg-mc-currency-col')?.value   || '',
+      },
+      exchangeRateField: {
+        dbTable:  document.getElementById('cfg-mc-rate-table')?.value || 'Transactions',
+        dbColumn: document.getElementById('cfg-mc-rate-col')?.value   || '',
+      },
+      dollarFlagField: {
+        dollarValue: document.getElementById('cfg-mc-flag-value')?.value || '1',
+      },
+    },
   };
 }
 
@@ -1381,6 +1498,37 @@ function populateSettings(s) {
 
   const poll = document.getElementById('cfg-pollInterval');
   if (poll) document.getElementById('pollLbl').textContent = poll.value + 's';
+
+  // Restore multi-currency settings
+  const mcEnabled = !!s.multiCurrencyEnabled;
+  const mcSw = document.getElementById('cfg-multiCurrencyEnabled');
+  if (mcSw) mcSw.classList.toggle('on', mcEnabled);
+  document.getElementById('multiCurrencyFields').style.display = mcEnabled ? 'block' : 'none';
+
+  const mc = s.multiCurrency || {};
+  const mcCur = mc.currencyField    || {};
+  const mcRate = mc.exchangeRateField || {};
+  const mcFlag = mc.dollarFlagField   || {};
+
+  const splitLegacyTableCol = (v, fallbackTable) => {
+    const raw = String(v || '').trim();
+    if (!raw) return { dbTable: fallbackTable || 'Transactions', dbColumn: '' };
+    const parts = raw.split('.');
+    if (parts.length < 2) return { dbTable: fallbackTable || 'Transactions', dbColumn: raw };
+    const dbColumn = parts.pop();
+    const dbTable = parts.join('.');
+    return { dbTable: dbTable || (fallbackTable || 'Transactions'), dbColumn: dbColumn || '' };
+  };
+
+  const mcCurLegacy = splitLegacyTableCol(mcCur.dbCol, 'Transactions');
+  const mcRateLegacy = splitLegacyTableCol(mcRate.dbCol, 'Transactions');
+
+  const setMc = (id, val, fallback) => { const el = document.getElementById(id); if (el) el.value = val !== undefined ? val : fallback; };
+  setMc('cfg-mc-currency-table', mcCur.dbTable,  mcCurLegacy.dbTable);
+  setMc('cfg-mc-currency-col',   mcCur.dbColumn, mcCur.posCol || mcCurLegacy.dbColumn);
+  setMc('cfg-mc-rate-table',     mcRate.dbTable, mcRateLegacy.dbTable);
+  setMc('cfg-mc-rate-col',       mcRate.dbColumn, mcRate.posCol || mcRateLegacy.dbColumn);
+  setMc('cfg-mc-flag-value',    mcFlag.dollarValue, '1');
 
   // Restore field mapping rows from saved settings
   if (Array.isArray(s.dbFieldMappings) && s.dbFieldMappings.length) {

@@ -49,6 +49,12 @@ const DEFAULT_SETTINGS = {
   ptsRate: '10', pollInterval: '3', autoDismiss: '30',
   countryCode: '+961', monitorOn: true, agentEnabled: true,
   createCustomerEnabled: false,
+  multiCurrencyEnabled: false,
+  multiCurrency: {
+    currencyField:     { dbTable: 'Transactions', dbColumn: '' },
+    exchangeRateField: { dbTable: 'Transactions', dbColumn: '' },
+    dollarFlagField:   { dollarValue: '1' },
+  },
 };
 
 const DEFAULT_STATS = { txnCount:0, sentCount:0, skipCount:0, totalAmt:0, date:'' };
@@ -221,6 +227,12 @@ function saveSettings(data) {
     dbFieldMappings: Array.isArray(merged.dbFieldMappings) ? merged.dbFieldMappings : [],
     pollInterval: merged.pollInterval,
     monitorOn: merged.monitorOn,
+    multiCurrencyEnabled: !!merged.multiCurrencyEnabled,
+    multiCurrency: merged.multiCurrency || {
+      currencyField:     { dbTable: 'Transactions', dbColumn: '' },
+      exchangeRateField: { dbTable: 'Transactions', dbColumn: '' },
+      dollarFlagField:   { dollarValue: '1' },
+    },
     updatedAt: new Date().toISOString(),
   };
   try {
@@ -378,6 +390,176 @@ function quoteMssqlIdent(name) {
   return String(name || '').split('.').map(p => `[${String(p).replace(/]/g, ']]')}]`).join('.');
 }
 
+function splitTableColumn(raw, fallbackTable) {
+  const txt = String(raw || '').trim();
+  if (!txt) return { dbTable: fallbackTable || 'Transactions', dbColumn: '' };
+  const parts = txt.split('.');
+  if (parts.length < 2) return { dbTable: fallbackTable || 'Transactions', dbColumn: txt };
+  const dbColumn = parts.pop();
+  const dbTable = parts.join('.');
+  return {
+    dbTable: String(dbTable || fallbackTable || 'Transactions').trim(),
+    dbColumn: String(dbColumn || '').trim(),
+  };
+}
+
+function normalizeMultiCurrencySettings(cfg) {
+  const mc = (cfg && cfg.multiCurrency) || {};
+  const currencyField = mc.currencyField || {};
+  const rateField = mc.exchangeRateField || {};
+  const dollarFlagField = mc.dollarFlagField || {};
+
+  const curLegacy = splitTableColumn(currencyField.dbCol, cfg.dbTableTxn || 'Transactions');
+  const rateLegacy = splitTableColumn(rateField.dbCol, cfg.dbTableTxn || 'Transactions');
+
+  return {
+    enabled: !!cfg.multiCurrencyEnabled,
+    currencyField: {
+      dbTable: String(currencyField.dbTable || curLegacy.dbTable || cfg.dbTableTxn || 'Transactions').trim(),
+      dbColumn: String(currencyField.dbColumn || currencyField.posCol || curLegacy.dbColumn || '').trim(),
+    },
+    exchangeRateField: {
+      dbTable: String(rateField.dbTable || rateLegacy.dbTable || cfg.dbTableTxn || 'Transactions').trim(),
+      dbColumn: String(rateField.dbColumn || rateField.posCol || rateLegacy.dbColumn || '').trim(),
+    },
+    dollarValue: String(dollarFlagField.dollarValue || mc.dollarValue || '1').trim(),
+  };
+}
+
+function hasMissingMultiCurrencyMappings(mcCfg) {
+  if (!mcCfg) return true;
+  if (!mcCfg.currencyField || !mcCfg.exchangeRateField) return true;
+  if (!mcCfg.currencyField.dbTable || !mcCfg.currencyField.dbColumn) return true;
+  if (!mcCfg.exchangeRateField.dbTable || !mcCfg.exchangeRateField.dbColumn) return true;
+  return false;
+}
+
+function currencyValuesEqual(a, b) {
+  return String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+}
+
+function toFiniteNumber(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : NaN;
+}
+
+function buildLookupSql(driver, tableName, valueColumn, cfg, useInvoiceFilter) {
+  const q = driver === 'mssql' ? quoteMssqlIdent : quoteSqliteIdent;
+  const tableQ = q(tableName);
+  const colQ = q(valueColumn);
+  const invColQ = q(cfg.dbColInvId || 'InvoiceNo');
+  const dtColQ = q(cfg.dbColDate || 'TransDate');
+
+  if (driver === 'mssql') {
+    const where = useInvoiceFilter ? `WHERE ${invColQ} = @inv` : '';
+    return `SELECT TOP 1 ${colQ} AS v FROM ${tableQ} ${where} ORDER BY ${dtColQ} DESC`;
+  }
+
+  if (useInvoiceFilter) {
+    return `SELECT ${colQ} AS v FROM ${tableQ} WHERE ${invColQ} = ? ORDER BY ${dtColQ} DESC LIMIT 1`;
+  }
+  return `SELECT ${colQ} AS v FROM ${tableQ} ORDER BY ${dtColQ} DESC LIMIT 1`;
+}
+
+function buildLookupSqlNoDate(driver, tableName, valueColumn, cfg, useInvoiceFilter) {
+  const q = driver === 'mssql' ? quoteMssqlIdent : quoteSqliteIdent;
+  const tableQ = q(tableName);
+  const colQ = q(valueColumn);
+  const invColQ = q(cfg.dbColInvId || 'InvoiceNo');
+
+  if (driver === 'mssql') {
+    const where = useInvoiceFilter ? `WHERE ${invColQ} = @inv` : '';
+    return `SELECT TOP 1 ${colQ} AS v FROM ${tableQ} ${where}`;
+  }
+
+  if (useInvoiceFilter) {
+    return `SELECT ${colQ} AS v FROM ${tableQ} WHERE ${invColQ} = ? LIMIT 1`;
+  }
+  return `SELECT ${colQ} AS v FROM ${tableQ} LIMIT 1`;
+}
+
+function readMappedValueSqlite(posDb, cfg, fieldMap, invId) {
+  if (!fieldMap || !fieldMap.dbTable || !fieldMap.dbColumn) return null;
+
+  // Try invoice-specific lookup first; if schema differs, gracefully fall back.
+  const attempts = [
+    { sql: buildLookupSql('sqlite', fieldMap.dbTable, fieldMap.dbColumn, cfg, true), params: [invId] },
+    { sql: buildLookupSql('sqlite', fieldMap.dbTable, fieldMap.dbColumn, cfg, false), params: [] },
+    { sql: buildLookupSqlNoDate('sqlite', fieldMap.dbTable, fieldMap.dbColumn, cfg, true), params: [invId] },
+    { sql: buildLookupSqlNoDate('sqlite', fieldMap.dbTable, fieldMap.dbColumn, cfg, false), params: [] },
+  ];
+
+  for (const a of attempts) {
+    try {
+      const row = posDb.prepare(a.sql).get(...a.params);
+      if (row && row.v !== undefined && row.v !== null) return row.v;
+    } catch (_) {}
+  }
+  return null;
+}
+
+async function readMappedValueMssql(pool, cfg, fieldMap, invId) {
+  if (!fieldMap || !fieldMap.dbTable || !fieldMap.dbColumn) return null;
+
+  const attempts = [
+    { sql: buildLookupSql('mssql', fieldMap.dbTable, fieldMap.dbColumn, cfg, true), withInv: true },
+    { sql: buildLookupSql('mssql', fieldMap.dbTable, fieldMap.dbColumn, cfg, false), withInv: false },
+    { sql: buildLookupSqlNoDate('mssql', fieldMap.dbTable, fieldMap.dbColumn, cfg, true), withInv: true },
+    { sql: buildLookupSqlNoDate('mssql', fieldMap.dbTable, fieldMap.dbColumn, cfg, false), withInv: false },
+  ];
+
+  for (const a of attempts) {
+    try {
+      const req = pool.request();
+      if (a.withInv) req.input('inv', mssql.NVarChar(128), String(invId || ''));
+      const result = await req.query(a.sql);
+      const row = result && result.recordset && result.recordset[0];
+      if (row && row.v !== undefined && row.v !== null) return row.v;
+    } catch (_) {}
+  }
+  return null;
+}
+
+function resolveApiAmount(baseAmount, mcCfg, currencyValueRaw, exchangeRateRaw) {
+  const amount = toFiniteNumber(baseAmount);
+  if (!Number.isFinite(amount)) {
+    return { apiAmount: baseAmount, usedConversion: false, reason: 'invalid-base-amount' };
+  }
+
+  const currencyValue = String(currencyValueRaw || '').trim();
+  const dollarValue = String(mcCfg.dollarValue || '').trim();
+  if (!currencyValue || !dollarValue) {
+    return { apiAmount: amount, usedConversion: false, reason: 'currency-or-dollar-value-missing', currencyValue, dollarValue };
+  }
+
+  if (currencyValuesEqual(currencyValue, dollarValue)) {
+    return { apiAmount: amount, usedConversion: false, reason: 'already-dollar', currencyValue, dollarValue };
+  }
+
+  if (exchangeRateRaw === null || exchangeRateRaw === undefined || String(exchangeRateRaw).trim() === '') {
+    return { apiAmount: amount, usedConversion: false, reason: 'exchange-rate-null-or-empty', currencyValue, dollarValue };
+  }
+
+  const rate = toFiniteNumber(exchangeRateRaw);
+  if (!Number.isFinite(rate) || rate <= 0) {
+    return { apiAmount: amount, usedConversion: false, reason: 'invalid-exchange-rate', currencyValue, dollarValue, exchangeRate: exchangeRateRaw };
+  }
+
+  const converted = Number((amount / rate).toFixed(6));
+  if (!Number.isFinite(converted) || converted <= 0) {
+    return { apiAmount: amount, usedConversion: false, reason: 'conversion-result-invalid', currencyValue, dollarValue, exchangeRate: rate };
+  }
+
+  return {
+    apiAmount: converted,
+    usedConversion: true,
+    reason: 'converted-with-rate',
+    currencyValue,
+    dollarValue,
+    exchangeRate: rate,
+  };
+}
+
 function buildSelectSql(driver, cfg) {
   const q = driver === 'mssql' ? quoteMssqlIdent : quoteSqliteIdent;
   const table  = q(cfg.dbTableTxn || 'Transactions');
@@ -438,6 +620,8 @@ async function getMssqlPool(cfg) {
 
 async function readLatestPosTxn(cfg) {
   const t = normDbType(cfg.dbType);
+  const mcCfg = normalizeMultiCurrencySettings(cfg);
+
   if (t.includes('sqlite')) {
     const posPath = resolveSqlitePosPath(cfg);
     if (!posPath) return null;
@@ -445,10 +629,41 @@ async function readLatestPosTxn(cfg) {
     try {
       const row = posDb.prepare(buildSelectSql('sqlite', cfg)).get();
       if (!row) return null;
+
+      const invId = normalizeInvoiceId(row.inv_id);
+      const baseAmount = Number(row.amt || 0);
+      let apiAmount = baseAmount;
+      let multiCurrency = { enabled: mcCfg.enabled, usedConversion: false, reason: 'disabled' };
+
+      if (mcCfg.enabled) {
+        if (hasMissingMultiCurrencyMappings(mcCfg)) {
+          multiCurrency = {
+            enabled: true,
+            usedConversion: false,
+            reason: 'missing-mapping-fields',
+            currencyField: mcCfg.currencyField,
+            exchangeRateField: mcCfg.exchangeRateField,
+          };
+        } else {
+          const currencyValue = readMappedValueSqlite(posDb, cfg, mcCfg.currencyField, invId);
+          const exchangeRate = readMappedValueSqlite(posDb, cfg, mcCfg.exchangeRateField, invId);
+          const resolved = resolveApiAmount(baseAmount, mcCfg, currencyValue, exchangeRate);
+          apiAmount = resolved.apiAmount;
+          multiCurrency = {
+            enabled: true,
+            ...resolved,
+            currencyField: mcCfg.currencyField,
+            exchangeRateField: mcCfg.exchangeRateField,
+          };
+        }
+      }
+
       return {
-        invId: normalizeInvoiceId(row.inv_id),
-        amt: Number(row.amt || 0),
+        invId,
+        amt: baseAmount,
+        apiAmt: apiAmount,
         txnDate: row.txn_date ?? null,
+        multiCurrency,
       };
     } finally {
       posDb.close();
@@ -460,10 +675,41 @@ async function readLatestPosTxn(cfg) {
     const result = await pool.request().query(buildSelectSql('mssql', cfg));
     const row = result && result.recordset && result.recordset[0];
     if (!row) return null;
+
+    const invId = normalizeInvoiceId(row.inv_id);
+    const baseAmount = Number(row.amt || 0);
+    let apiAmount = baseAmount;
+    let multiCurrency = { enabled: mcCfg.enabled, usedConversion: false, reason: 'disabled' };
+
+    if (mcCfg.enabled) {
+      if (hasMissingMultiCurrencyMappings(mcCfg)) {
+        multiCurrency = {
+          enabled: true,
+          usedConversion: false,
+          reason: 'missing-mapping-fields',
+          currencyField: mcCfg.currencyField,
+          exchangeRateField: mcCfg.exchangeRateField,
+        };
+      } else {
+        const currencyValue = await readMappedValueMssql(pool, cfg, mcCfg.currencyField, invId);
+        const exchangeRate = await readMappedValueMssql(pool, cfg, mcCfg.exchangeRateField, invId);
+        const resolved = resolveApiAmount(baseAmount, mcCfg, currencyValue, exchangeRate);
+        apiAmount = resolved.apiAmount;
+        multiCurrency = {
+          enabled: true,
+          ...resolved,
+          currencyField: mcCfg.currencyField,
+          exchangeRateField: mcCfg.exchangeRateField,
+        };
+      }
+    }
+
     return {
-      invId: normalizeInvoiceId(row.inv_id),
-      amt: Number(row.amt || 0),
+      invId,
+      amt: baseAmount,
+      apiAmt: apiAmount,
       txnDate: row.txn_date ?? null,
+      multiCurrency,
     };
   }
 
@@ -540,8 +786,24 @@ async function pollPosOnce() {
 
     activeInvId = tx.invId;
   lastPollInfoMsg = '';
-    emitFeed(`New invoice: ${tx.invId} — $${Number(tx.amt).toFixed(2)}`, 'ok');
-    openPopupWindow({ invId: tx.invId, amt: tx.amt }, false);
+    const amountForApi = Number(tx.apiAmt ?? tx.amt ?? 0);
+    emitFeed(`New invoice: ${tx.invId} — $${amountForApi.toFixed(2)}`, 'ok');
+    if (tx.multiCurrency && tx.multiCurrency.enabled) {
+      if (tx.multiCurrency.usedConversion) {
+        emitFeed(
+          `Multi-currency applied: ${Number(tx.amt).toFixed(2)} / ${Number(tx.multiCurrency.exchangeRate).toFixed(6)} = ${amountForApi.toFixed(2)} (currency=${tx.multiCurrency.currencyValue}, dollar=${tx.multiCurrency.dollarValue})`,
+          'info'
+        );
+      } else if (tx.multiCurrency.reason === 'already-dollar') {
+        emitFeed(
+          `Multi-currency: currency "${tx.multiCurrency.currencyValue}" matches dollar value "${tx.multiCurrency.dollarValue}". Using original amount.`,
+          'info'
+        );
+      } else {
+        emitFeed(`Multi-currency enabled but conversion was skipped (${tx.multiCurrency.reason}). Using original amount.`, 'warn');
+      }
+    }
+    openPopupWindow({ invId: tx.invId, amt: amountForApi }, false);
     clearPollError();
   } catch(err) {
     reportPollError(err);
