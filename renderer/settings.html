@@ -457,6 +457,11 @@ tr:hover td { background: var(--bg3); }
     <!-- Pages -->
     <main class="s-main">
 
+      <!-- Read-only disclaimer -->
+      <div style="background: #181c27; color: #f59e0b; border: 1px solid #f59e0b; border-radius: 10px; padding: 14px 18px; margin: 24px 24px 0 24px; font-size: 13px; font-weight: 600;">
+        <span style="font-size:15px; font-weight:800; color:#f59e0b;">Notice:</span> This connector <strong>only reads</strong> data from your POS database. It <strong>never writes, updates, or deletes</strong> any POS data. Your POS system remains unchanged and safe.
+      </div>
+
       <!-- MONITOR -->
       <div class="s-page active" id="sp-monitor">
         <div class="page-header page-head-row">
@@ -639,7 +644,7 @@ tr:hover td { background: var(--bg3); }
                 </div>
                 <div style="padding-top:22px">
                   <div style="font-size:11px;color:var(--text3);line-height:1.6">
-                    When the POS field value matches the Dollar Flag Value, the transaction is treated as a <strong style="color:var(--amber)">USD transaction</strong> and the exchange rate mapping is applied before points calculation.
+                    When the POS field value matches the Dollar Flag Value, the transaction is treated as a <strong style="color:var(--amber)">USD transaction</strong> and the original amount is used (no conversion). When it does not match, the amount is converted by dividing by the Exchange Rate before points calculation.
                   </div>
                 </div>
               </div>

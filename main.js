@@ -526,8 +526,9 @@ function resolveApiAmount(baseAmount, mcCfg, currencyValueRaw, exchangeRateRaw) 
     return { apiAmount: baseAmount, usedConversion: false, reason: 'invalid-base-amount' };
   }
 
-  const currencyValue = String(currencyValueRaw || '').trim();
-  const dollarValue = String(mcCfg.dollarValue || '').trim();
+  // Keep numeric 0/boolean false values from DB fields; they are valid flags.
+  const currencyValue = String(currencyValueRaw ?? '').trim();
+  const dollarValue = String(mcCfg.dollarValue ?? '').trim();
   if (!currencyValue || !dollarValue) {
     return { apiAmount: amount, usedConversion: false, reason: 'currency-or-dollar-value-missing', currencyValue, dollarValue };
   }
