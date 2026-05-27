@@ -655,6 +655,44 @@ tr:hover td { background: var(--bg3); }
             </div>
           </div>
         </div>
+
+        <!-- Fixed Rate Conversion -->
+        <div class="card" style="margin-top:16px">
+          <div class="card-title" style="display:flex;align-items:center;gap:8px">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" style="color:var(--accent);flex-shrink:0">
+              <path d="M2 8h12M8 2l4 6-4 6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            Fixed Rate Conversion
+          </div>
+
+          <div class="toggle-row" style="padding-bottom:0;border-bottom:none">
+            <div>
+              <div class="t-label">Always Convert Amount by Fixed Rating</div>
+              <div class="t-desc">When enabled, this <strong>overrides</strong> the "Save Different Currency Amounts in the Same Field" option. The transaction amount is always divided by the fixed <em>Rating</em> value below before being sent to the API — no currency flags are checked. Use this when your POS always stores amounts in a non-$ currency and there is no flag column to detect it.</div>
+            </div>
+            <button class="toggle-sw" id="cfg-fixedRateEnabled" onclick="toggleFixedRate(this)"></button>
+          </div>
+
+          <!-- conditional fixed-rate field — hidden by default -->
+          <div id="fixedRateFields" style="display:none;margin-top:20px">
+            <div class="divider" style="margin-top:0;margin-bottom:16px"></div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+              <div class="field">
+                <label>Rating (divisor)</label>
+                <input type="text" id="cfg-fixed-rate-value" placeholder="e.g. 1500" style="border-radius:8px;padding:8px 12px;font-family:inherit">
+                <div class="hint">A positive number. The raw POS amount will be divided by this value before being sent to the API.<br>Example: if POS amount is 15000 and Rating is 1500, the API receives 10.00.</div>
+              </div>
+              <div style="padding-top:22px">
+                <div style="font-size:11px;color:var(--text3);line-height:1.6">
+                  This setting takes full priority. When enabled, Multi-Currency handling is skipped entirely for every transaction — the API always receives <strong style="color:var(--accent)">amount ÷ Rating</strong>.
+                </div>
+              </div>
+            </div>
+            <div class="btn-row" style="margin-top:14px">
+              <button class="btn btn-primary" onclick="saveConfig()">Save Fixed Rate</button>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- API -->
@@ -1020,6 +1058,12 @@ function tsw(btn) { btn.classList.toggle('on'); }
 function toggleMultiCurrency(btn) {
   btn.classList.toggle('on');
   document.getElementById('multiCurrencyFields').style.display =
+    btn.classList.contains('on') ? 'block' : 'none';
+}
+
+function toggleFixedRate(btn) {
+  btn.classList.toggle('on');
+  document.getElementById('fixedRateFields').style.display =
     btn.classList.contains('on') ? 'block' : 'none';
 }
 
@@ -1468,6 +1512,11 @@ function gatherSettings() {
         dollarValue: document.getElementById('cfg-mc-flag-value')?.value || '1',
       },
     },
+    // Fixed rate conversion settings
+    fixedRateEnabled: document.getElementById('cfg-fixedRateEnabled')?.classList.contains('on') || false,
+    fixedRate: {
+      ratingValue: document.getElementById('cfg-fixed-rate-value')?.value || '',
+    },
   };
 }
 
@@ -1534,6 +1583,15 @@ function populateSettings(s) {
   setMc('cfg-mc-rate-table',     mcRate.dbTable, mcRateLegacy.dbTable);
   setMc('cfg-mc-rate-col',       mcRate.dbColumn, mcRate.posCol || mcRateLegacy.dbColumn);
   setMc('cfg-mc-flag-value',    mcFlag.dollarValue, '1');
+
+  // Restore fixed-rate conversion settings
+  const frEnabled = !!s.fixedRateEnabled;
+  const frSw = document.getElementById('cfg-fixedRateEnabled');
+  if (frSw) frSw.classList.toggle('on', frEnabled);
+  document.getElementById('fixedRateFields').style.display = frEnabled ? 'block' : 'none';
+  const fr = s.fixedRate || {};
+  const frInput = document.getElementById('cfg-fixed-rate-value');
+  if (frInput) frInput.value = fr.ratingValue !== undefined ? fr.ratingValue : '';
 
   // Restore field mapping rows from saved settings
   if (Array.isArray(s.dbFieldMappings) && s.dbFieldMappings.length) {

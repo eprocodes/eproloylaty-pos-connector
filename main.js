@@ -55,6 +55,8 @@ const DEFAULT_SETTINGS = {
     exchangeRateField: { dbTable: 'Transactions', dbColumn: '' },
     dollarFlagField:   { dollarValue: '1' },
   },
+  fixedRateEnabled: false,
+  fixedRate: { ratingValue: '' },
 };
 
 const DEFAULT_STATS = { txnCount:0, sentCount:0, skipCount:0, totalAmt:0, date:'' };
@@ -233,6 +235,8 @@ function saveSettings(data) {
       exchangeRateField: { dbTable: 'Transactions', dbColumn: '' },
       dollarFlagField:   { dollarValue: '1' },
     },
+    fixedRateEnabled: !!merged.fixedRateEnabled,
+    fixedRate: merged.fixedRate || { ratingValue: '' },
     updatedAt: new Date().toISOString(),
   };
   try {
@@ -619,6 +623,22 @@ async function getMssqlPool(cfg) {
   return mssqlPool;
 }
 
+function resolveFixedRateAmount(baseAmount, cfg) {
+  const frEnabled = !!cfg.fixedRateEnabled;
+  if (!frEnabled) return null;
+  const fr = cfg.fixedRate || {};
+  const ratingStr = String(fr.ratingValue || '').trim();
+  const rating = toFiniteNumber(ratingStr);
+  if (!Number.isFinite(rating) || rating <= 0) {
+    return { apiAmount: baseAmount, usedConversion: false, reason: 'fixed-rate-invalid-or-missing', ratingValue: ratingStr };
+  }
+  const converted = Number((baseAmount / rating).toFixed(6));
+  if (!Number.isFinite(converted) || converted <= 0) {
+    return { apiAmount: baseAmount, usedConversion: false, reason: 'fixed-rate-conversion-result-invalid', ratingValue: ratingStr };
+  }
+  return { apiAmount: converted, usedConversion: true, reason: 'fixed-rate-applied', ratingValue: ratingStr };
+}
+
 async function readLatestPosTxn(cfg) {
   const t = normDbType(cfg.dbType);
   const mcCfg = normalizeMultiCurrencySettings(cfg);
@@ -635,8 +655,15 @@ async function readLatestPosTxn(cfg) {
       const baseAmount = Number(row.amt || 0);
       let apiAmount = baseAmount;
       let multiCurrency = { enabled: mcCfg.enabled, usedConversion: false, reason: 'disabled' };
+      let fixedRateInfo = { enabled: false };
 
-      if (mcCfg.enabled) {
+      const frResult = resolveFixedRateAmount(baseAmount, cfg);
+      if (frResult) {
+        // Fixed-rate override — skip multi-currency entirely
+        apiAmount = frResult.apiAmount;
+        fixedRateInfo = { enabled: true, ...frResult };
+        multiCurrency = { enabled: mcCfg.enabled, usedConversion: false, reason: 'overridden-by-fixed-rate' };
+      } else if (mcCfg.enabled) {
         if (hasMissingMultiCurrencyMappings(mcCfg)) {
           multiCurrency = {
             enabled: true,
@@ -665,6 +692,7 @@ async function readLatestPosTxn(cfg) {
         apiAmt: apiAmount,
         txnDate: row.txn_date ?? null,
         multiCurrency,
+        fixedRate: fixedRateInfo,
       };
     } finally {
       posDb.close();
@@ -681,8 +709,15 @@ async function readLatestPosTxn(cfg) {
     const baseAmount = Number(row.amt || 0);
     let apiAmount = baseAmount;
     let multiCurrency = { enabled: mcCfg.enabled, usedConversion: false, reason: 'disabled' };
+    let fixedRateInfo = { enabled: false };
 
-    if (mcCfg.enabled) {
+    const frResult = resolveFixedRateAmount(baseAmount, cfg);
+    if (frResult) {
+      // Fixed-rate override — skip multi-currency entirely
+      apiAmount = frResult.apiAmount;
+      fixedRateInfo = { enabled: true, ...frResult };
+      multiCurrency = { enabled: mcCfg.enabled, usedConversion: false, reason: 'overridden-by-fixed-rate' };
+    } else if (mcCfg.enabled) {
       if (hasMissingMultiCurrencyMappings(mcCfg)) {
         multiCurrency = {
           enabled: true,
@@ -711,6 +746,7 @@ async function readLatestPosTxn(cfg) {
       apiAmt: apiAmount,
       txnDate: row.txn_date ?? null,
       multiCurrency,
+      fixedRate: fixedRateInfo,
     };
   }
 
