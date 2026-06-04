@@ -374,15 +374,6 @@ function normDbType(v) {
 function normalizeInvoiceId(value) {
   const raw = String(value ?? '').trim();
   if (!raw) return '';
-
-  const upper = raw.toUpperCase();
-  if (/^INV-\d{8}$/.test(upper)) return upper;
-
-  const digits = raw.replace(/\D/g, '');
-  if (digits) {
-    return `INV-${digits.slice(-8).padStart(8, '0')}`;
-  }
-
   return raw;
 }
 
